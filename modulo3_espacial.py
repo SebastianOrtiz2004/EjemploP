@@ -21,120 +21,173 @@ import math
 import numpy as np
 
 
-def formato_uint8(valor):
-    """Acota al rango [0, 255]."""
-    val = int(round(valor))
-    return max(0, min(255, val))
+def acotar_pixel_uint8(valor_pixel):
+    """Acota cualquier valor numérico estrictamente al rango entero sin signo [0, 255]."""
+    valor_entero = int(round(valor_pixel))
+    return max(0, min(255, valor_entero))
 
 
-def agregar_padding_ceros(matriz, pad_f, pad_c):
-    """Agrega un marco perimetral de ceros para no perder filas ni columnas."""
-    alto, ancho = matriz.shape
-    salida = np.zeros((alto + 2 * pad_f, ancho + 2 * pad_c), dtype=matriz.dtype)
-    salida[pad_f:pad_f + alto, pad_c:pad_c + ancho] = matriz
-    return salida
+def agregar_relleno_ceros(matriz_imagen, relleno_filas, relleno_columnas):
+    """Agrega un marco perimetral de ceros para no perder información en los bordes."""
+    alto_original, ancho_original = matriz_imagen.shape
+    matriz_con_relleno = np.zeros(
+        (alto_original + 2 * relleno_filas, ancho_original + 2 * relleno_columnas),
+        dtype=matriz_imagen.dtype
+    )
+    matriz_con_relleno[
+        relleno_filas:relleno_filas + alto_original,
+        relleno_columnas:relleno_columnas + ancho_original
+    ] = matriz_imagen
+    return matriz_con_relleno
 
 
-def calcular_matriz_gaussiana(k, sigma=1.0):
-    """Genera analíticamente la máscara Gaussiana continua normalizada a suma = 1.0."""
-    kernel = np.zeros((k, k), dtype=np.float64)
-    centro = k // 2
-    for i in range(k):
-        for j in range(k):
-            x, y = i - centro, j - centro
-            kernel[i, j] = math.exp(-(x**2 + y**2) / (2.0 * (sigma**2)))
-    return kernel / np.sum(kernel)
+def generar_mascara_gaussiana(tamano_kernel, desviacion_sigma=1.0):
+    """
+    Genera analíticamente la máscara Gaussiana continua normalizada para que
+    la suma de sus coeficientes sea exactamente 1.0 (evitando alteración de brillo medio).
+    """
+    mascara_gaussiana = np.zeros((tamano_kernel, tamano_kernel), dtype=np.float64)
+    centro_kernel = tamano_kernel // 2
+    for fila_k in range(tamano_kernel):
+        for columna_k in range(tamano_kernel):
+            distancia_x = fila_k - centro_kernel
+            distancia_y = columna_k - centro_kernel
+            mascara_gaussiana[fila_k, columna_k] = math.exp(
+                -(distancia_x**2 + distancia_y**2) / (2.0 * (desviacion_sigma**2))
+            )
+    return mascara_gaussiana / np.sum(mascara_gaussiana)
 
 
-def inyectar_ruido_sal_pimienta(matriz_img, densidad=0.05):
-    """Inyecta ruido impulsivo (sal=255 y pimienta=0) vectorizado mediante NumPy puro."""
-    if densidad <= 0.0:
-        return matriz_img.copy()
+def aplicar_ruido_sal_y_pimienta(imagen_entrada, probabilidad_ruido=0.05):
+    """
+    Inyecta ruido impulsivo bipolar (pimienta = 0 y sal = 255)
+    de forma vectorizada mediante NumPy puro.
+    """
+    if probabilidad_ruido <= 0.0:
+        return imagen_entrada.copy()
 
-    salida = matriz_img.copy()
-    forma = salida.shape[:2]
-    rnd = np.random.rand(*forma)
+    imagen_ruidosa = imagen_entrada.copy()
+    dimensiones = imagen_ruidosa.shape[:2]
+    matriz_aleatoria = np.random.rand(*dimensiones)
 
     # Densidad dividida equitativamente entre sal y pimienta
-    mitad_d = densidad / 2.0
-    mascara_pimienta = rnd < mitad_d
-    mascara_sal = (rnd >= mitad_d) & (rnd < densidad)
+    umbral_pimienta = probabilidad_ruido / 2.0
+    posiciones_pimienta = matriz_aleatoria < umbral_pimienta
+    posiciones_sal = (matriz_aleatoria >= umbral_pimienta) & (matriz_aleatoria < probabilidad_ruido)
 
-    if salida.ndim == 3:
-        salida[mascara_pimienta] = [0, 0, 0]
-        salida[mascara_sal] = [255, 255, 255]
+    if imagen_ruidosa.ndim == 3:
+        imagen_ruidosa[posiciones_pimienta] = [0, 0, 0]
+        imagen_ruidosa[posiciones_sal] = [255, 255, 255]
     else:
-        salida[mascara_pimienta] = 0
-        salida[mascara_sal] = 255
+        imagen_ruidosa[posiciones_pimienta] = 0
+        imagen_ruidosa[posiciones_sal] = 255
 
-    return salida
+    return imagen_ruidosa
 
 
-def convolucion_con_salto_manual(canal_u8, mascara, salto_f=1, salto_c=1, usar_pad=True):
+def convolucionar_con_salto_espacial(
+    canal_imagen_u8,
+    mascara_filtro,
+    salto_filas=1,
+    salto_columnas=1,
+    aplicar_relleno=True
+):
     """
     Convolución espacial punto a punto con submuestreo por saltos (stride).
     Cumple con el Teorema de Muestreo de Nyquist mitigando el aliasing.
     """
-    k_f, k_c = mascara.shape
-    pad_f = (k_f - 1) // 2 if usar_pad else 0
-    pad_c = (k_c - 1) // 2 if usar_pad else 0
+    filas_kernel, columnas_kernel = mascara_filtro.shape
+    relleno_filas = (filas_kernel - 1) // 2 if aplicar_relleno else 0
+    relleno_columnas = (columnas_kernel - 1) // 2 if aplicar_relleno else 0
 
-    alto, ancho = canal_u8.shape
-    if usar_pad:
-        mat_trabajo = agregar_padding_ceros(canal_u8.astype(np.float64), pad_f, pad_c)
-        lim_f, lim_c = alto, ancho
-        alto_out = math.ceil(alto / float(salto_f))
-        ancho_out = math.ceil(ancho / float(salto_c))
+    alto_original, ancho_original = canal_imagen_u8.shape
+    if aplicar_relleno:
+        matriz_operacion = agregar_relleno_ceros(
+            canal_imagen_u8.astype(np.float64),
+            relleno_filas,
+            relleno_columnas
+        )
+        limite_filas = alto_original
+        limite_columnas = ancho_original
+        alto_reducido = math.ceil(alto_original / float(salto_filas))
+        ancho_reducido = math.ceil(ancho_original / float(salto_columnas))
     else:
-        mat_trabajo = canal_u8.astype(np.float64)
-        lim_f = alto - 2 * pad_f
-        lim_c = ancho - 2 * pad_c
-        alto_out = math.ceil(lim_f / float(salto_f))
-        ancho_out = math.ceil(lim_c / float(salto_c))
+        matriz_operacion = canal_imagen_u8.astype(np.float64)
+        limite_filas = alto_original - 2 * relleno_filas
+        limite_columnas = ancho_original - 2 * relleno_columnas
+        alto_reducido = math.ceil(limite_filas / float(salto_filas))
+        ancho_reducido = math.ceil(limite_columnas / float(salto_columnas))
 
-    salida = np.zeros((alto_out, ancho_out), dtype=np.uint8)
-    suma_w = float(np.sum(mascara))
-    if abs(suma_w) < 1e-6:
-        suma_w = 1.0
+    imagen_filtrada = np.zeros((alto_reducido, ancho_reducido), dtype=np.uint8)
+    suma_pesos_mascara = float(np.sum(mascara_filtro))
+    if abs(suma_pesos_mascara) < 1e-6:
+        suma_pesos_mascara = 1.0
 
-    idx_f = 0
-    for f in range(0, lim_f, salto_f):
-        if idx_f >= alto_out:
+    indice_fila_salida = 0
+    for pos_fila in range(0, limite_filas, salto_filas):
+        if indice_fila_salida >= alto_reducido:
             break
-        idx_c = 0
-        for c in range(0, lim_c, salto_c):
-            if idx_c >= ancho_out:
+        indice_columna_salida = 0
+        for pos_columna in range(0, limite_columnas, salto_columnas):
+            if indice_columna_salida >= ancho_reducido:
                 break
-            vecindad = mat_trabajo[f:f + k_f, c:c + k_c]
-            acumulador = np.sum(vecindad * mascara)
-            salida[idx_f, idx_c] = formato_uint8(acumulador / suma_w)
-            idx_c += 1
-        idx_f += 1
-        
-    return salida
+            region_vecindad = matriz_operacion[
+                pos_fila:pos_fila + filas_kernel,
+                pos_columna:pos_columna + columnas_kernel
+            ]
+            suma_ponderada = np.sum(region_vecindad * mascara_filtro)
+            imagen_filtrada[indice_fila_salida, indice_columna_salida] = acotar_pixel_uint8(
+                suma_ponderada / suma_pesos_mascara
+            )
+            indice_columna_salida += 1
+        indice_fila_salida += 1
+
+    return imagen_filtrada
 
 
-def filtro_mediana_manual(canal_u8, k=3, salto_f=1, salto_c=1):
-    """Filtro no lineal: ordena la vecindad espacial y extrae el elemento central."""
-    pad = (k - 1) // 2
-    mat_pad = agregar_padding_ceros(canal_u8, pad, pad)
-    alto, ancho = canal_u8.shape
+def aplicar_filtro_mediana_con_salto(
+    canal_imagen_u8,
+    tamano_kernel=3,
+    salto_filas=1,
+    salto_columnas=1
+):
+    """Filtro no lineal: ordena la vecindad espacial y extrae el elemento central (mediana)."""
+    relleno_borde = (tamano_kernel - 1) // 2
+    matriz_con_relleno = agregar_relleno_ceros(canal_imagen_u8, relleno_borde, relleno_borde)
+    alto_original, ancho_original = canal_imagen_u8.shape
 
-    alto_out = math.ceil(alto / float(salto_f))
-    ancho_out = math.ceil(ancho / float(salto_c))
-    salida = np.zeros((alto_out, ancho_out), dtype=np.uint8)
+    alto_reducido = math.ceil(alto_original / float(salto_filas))
+    ancho_reducido = math.ceil(ancho_original / float(salto_columnas))
+    imagen_filtrada = np.zeros((alto_reducido, ancho_reducido), dtype=np.uint8)
 
-    idx_f = 0
-    for f in range(0, alto, salto_f):
-        if idx_f >= alto_out:
+    indice_fila_salida = 0
+    for pos_fila in range(0, alto_original, salto_filas):
+        if indice_fila_salida >= alto_reducido:
             break
-        idx_c = 0
-        for c in range(0, ancho, salto_c):
-            if idx_c >= ancho_out:
+        indice_columna_salida = 0
+        for pos_columna in range(0, ancho_original, salto_columnas):
+            if indice_columna_salida >= ancho_reducido:
                 break
-            vecindad = mat_pad[f:f + k, c:c + k].flatten()
-            vecindad.sort()
-            salida[idx_f, idx_c] = vecindad[len(vecindad) // 2]
-            idx_c += 1
-        idx_f += 1
-    return salida
+            vector_vecindad = matriz_con_relleno[
+                pos_fila:pos_fila + tamano_kernel,
+                pos_columna:pos_columna + tamano_kernel
+            ].flatten()
+            vector_vecindad.sort()
+            imagen_filtrada[indice_fila_salida, indice_columna_salida] = vector_vecindad[
+                len(vector_vecindad) // 2
+            ]
+            indice_columna_salida += 1
+        indice_fila_salida += 1
+
+    return imagen_filtrada
+
+
+# =============================================================================
+# ALIAS DE COMPATIBILIDAD (Para no romper código existente)
+# =============================================================================
+formato_uint8 = acotar_pixel_uint8
+agregar_padding_ceros = agregar_relleno_ceros
+calcular_matriz_gaussiana = generar_mascara_gaussiana
+inyectar_ruido_sal_pimienta = aplicar_ruido_sal_y_pimienta
+convolucion_con_salto_manual = convolucionar_con_salto_espacial
+filtro_mediana_manual = aplicar_filtro_mediana_con_salto

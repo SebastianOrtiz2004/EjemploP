@@ -19,36 +19,51 @@ Fundamento Teórico:
 import numpy as np
 
 
-def formato_uint8(valor):
+def acotar_a_uint8(valor_pixel):
     """
     Acota estrictamente cualquier valor numérico al rango entero sin signo [0, 255]
     previniendo artefactos por desbordamiento (overflow/underflow).
     """
-    val = int(round(valor))
-    return max(0, min(255, val))
+    valor_entero = int(round(valor_pixel))
+    return max(0, min(255, valor_entero))
 
 
-def separar_canales_rgb(matriz_rgb):
+def extraer_canales_rgb_y_gris(imagen_rgb):
     """
-    Separa los tres canales espectrales R, G, B mediante rebanado matricial
-    y calcula la matriz de escala de grises fisiológica NTSC mediante NumPy puro.
+    Separa los tres canales espectrales (Rojo, Verde, Azul) mediante rebanado matricial
+    y calcula la matriz de escala de grises fisiológica NTSC mediante ponderación ITU-R BT.601.
     
     Retorna:
-        r, g, b, gris: Cuatro matrices 2D de tipo uint8.
+        canal_rojo, canal_verde, canal_azul, imagen_escala_grises: Cuatro matrices 2D de tipo uint8.
     """
-    r = matriz_rgb[:, :, 0]
-    g = matriz_rgb[:, :, 1]
-    b = matriz_rgb[:, :, 2]
-    # Ponderación NTSC (ITU-R BT.601)
-    gris = np.clip(np.round(0.2989 * r + 0.5870 * g + 0.1140 * b), 0, 255).astype(np.uint8)
-    return r, g, b, gris
+    canal_rojo = imagen_rgb[:, :, 0]
+    canal_verde = imagen_rgb[:, :, 1]
+    canal_azul = imagen_rgb[:, :, 2]
+    
+    # Ponderación fisiológica NTSC (ITU-R BT.601) según sensibilidad del ojo humano
+    imagen_escala_grises = np.clip(
+        np.round(0.2989 * canal_rojo + 0.5870 * canal_verde + 0.1140 * canal_azul),
+        0,
+        255
+    ).astype(np.uint8)
+    
+    return canal_rojo, canal_verde, canal_azul, imagen_escala_grises
 
 
-def rgb_a_double(matriz_rgb):
+def convertir_rgb_a_flotante_normalizado(imagen_rgb):
     """
-    Convierte canales uint8 [0, 255] a precisión continua double (float64) normalizada [0.0, 1.0].
+    Convierte canales uint8 [0, 255] a precisión continua double (float64)
+    normalizada en el rango decimal continuo [0.0, 1.0].
     """
-    r_db = matriz_rgb[:, :, 0].astype(np.float64) / 255.0
-    g_db = matriz_rgb[:, :, 1].astype(np.float64) / 255.0
-    b_db = matriz_rgb[:, :, 2].astype(np.float64) / 255.0
-    return r_db, g_db, b_db
+    canal_rojo_normalizado = imagen_rgb[:, :, 0].astype(np.float64) / 255.0
+    canal_verde_normalizado = imagen_rgb[:, :, 1].astype(np.float64) / 255.0
+    canal_azul_normalizado = imagen_rgb[:, :, 2].astype(np.float64) / 255.0
+    return canal_rojo_normalizado, canal_verde_normalizado, canal_azul_normalizado
+
+
+# =============================================================================
+# ALIAS DE COMPATIBILIDAD (Para no romper código existente)
+# =============================================================================
+formato_uint8 = acotar_a_uint8
+separar_canales_rgb = extraer_canales_rgb_y_gris
+rgb_a_double = convertir_rgb_a_flotante_normalizado

@@ -26,22 +26,54 @@ import matplotlib.pyplot as plt
 import cv2
 
 # Importaciones modulares
-from modulo1_canales import formato_uint8, separar_canales_rgb, rgb_a_double
+from modulo1_canales import (
+    acotar_a_uint8,
+    extraer_canales_rgb_y_gris,
+    convertir_rgb_a_flotante_normalizado,
+    formato_uint8,
+    separar_canales_rgb,
+    rgb_a_double,
+)
 from modulo2_histogramas import (
+    calcular_histograma_frecuencias,
+    calcular_pdf_probabilidades,
+    ajustar_contraste_lineal_centrado,
+    aplanar_histograma_por_vecindad,
+    # alias de compatibilidad
     calcular_histograma_1d,
     calcular_pdf_normalizada,
     aplicar_contraste_lineal,
     redistribuir_canal_numpy,
 )
 from modulo3_espacial import (
+    agregar_relleno_ceros,
+    generar_mascara_gaussiana,
+    aplicar_ruido_sal_y_pimienta,
+    convolucionar_con_salto_espacial,
+    aplicar_filtro_mediana_con_salto,
+    # alias de compatibilidad
     agregar_padding_ceros,
     calcular_matriz_gaussiana,
     inyectar_ruido_sal_pimienta,
     convolucion_con_salto_manual,
     filtro_mediana_manual,
 )
-from modulo4_frecuencia import acentuado_espacial, filtrado_frecuencia_fft
+from modulo4_frecuencia import (
+    aplicar_acentuado_espacial,
+    filtrar_en_frecuencia_fft2,
+    # alias de compatibilidad
+    acentuado_espacial,
+    filtrado_frecuencia_fft,
+)
 from modulo_bordes import (
+    detectar_bordes_roberts,
+    detectar_bordes_prewitt,
+    detectar_bordes_sobel,
+    detectar_bordes_kirsch_4direcciones,
+    detectar_bordes_log_dog_cruces_cero,
+    analizar_subespacios_frei_chen,
+    aplicar_relajacion_contextual_bordes,
+    # alias de compatibilidad
     operador_roberts_2x2,
     operador_prewitt_3x3,
     operador_sobel_3x3,
@@ -51,6 +83,11 @@ from modulo_bordes import (
     relajacion_bordes_iterativa,
 )
 from modulo5_geometria import (
+    calcular_umbral_otsu,
+    rellenar_huecos_morfologia,
+    extraer_propiedades_geometricas,
+    calcular_cuadrado_envolvente_simetrico,
+    # alias de compatibilidad
     umbral_otsu_numpy,
     imfill_holes,
     calcular_propiedades_opencv,
@@ -230,37 +267,52 @@ class AplicacionPDIMaestra:
         self.actualizar_tab1()
 
     def actualizar_tab1(self):
-        c_r, red_r = float(self.slider_c_r.get()), float(self.slider_red_r.get())
-        c_g, red_g = float(self.slider_c_g.get()), float(self.slider_red_g.get())
-        c_b, red_b = float(self.slider_c_b.get()), float(self.slider_red_b.get())
+        contraste_rojo = float(self.slider_c_r.get())
+        redistribucion_rojo = float(self.slider_red_r.get())
+        contraste_verde = float(self.slider_c_g.get())
+        redistribucion_verde = float(self.slider_red_g.get())
+        contraste_azul = float(self.slider_c_b.get())
+        redistribucion_azul = float(self.slider_red_b.get())
 
-        r, g, b, _ = separar_canales_rgb(self.img_rgb_original)
-        r_mod = redistribuir_canal_numpy(aplicar_contraste_lineal(r, c_r), red_r)
-        g_mod = redistribuir_canal_numpy(aplicar_contraste_lineal(g, c_g), red_g)
-        b_mod = redistribuir_canal_numpy(aplicar_contraste_lineal(b, c_b), red_b)
-        img_res = np.stack([r_mod, g_mod, b_mod], axis=-1)
+        canal_rojo, canal_verde, canal_azul, _ = extraer_canales_rgb_y_gris(self.img_rgb_original)
+        rojo_modificado = aplanar_histograma_por_vecindad(
+            ajustar_contraste_lineal_centrado(canal_rojo, contraste_rojo),
+            redistribucion_rojo
+        )
+        verde_modificado = aplanar_histograma_por_vecindad(
+            ajustar_contraste_lineal_centrado(canal_verde, contraste_verde),
+            redistribucion_verde
+        )
+        azul_modificado = aplanar_histograma_por_vecindad(
+            ajustar_contraste_lineal_centrado(canal_azul, contraste_azul),
+            redistribucion_azul
+        )
+        imagen_resultante_rgb = np.stack([rojo_modificado, verde_modificado, azul_modificado], axis=-1)
 
-        for mat, modo, lbl in [
+        for matriz_canal, modo_color, label_widget in [
             (self.img_rgb_original, "RGB", self.lbl_v_orig),
-            (img_res, "RGB", self.lbl_v_res),
-            (r_mod, "L", self.lbl_v_r),
-            (g_mod, "L", self.lbl_v_g),
-            (b_mod, "L", self.lbl_v_b)
+            (imagen_resultante_rgb, "RGB", self.lbl_v_res),
+            (rojo_modificado, "L", self.lbl_v_r),
+            (verde_modificado, "L", self.lbl_v_g),
+            (azul_modificado, "L", self.lbl_v_b)
         ]:
-            p_img = Image.fromarray(mat, mode=modo)
-            p_img.thumbnail((190, 150), Image.Resampling.LANCZOS)
-            tk_im = ImageTk.PhotoImage(p_img)
-            lbl.config(image=tk_im)
-            lbl.image = tk_im
+            imagen_pil = Image.fromarray(matriz_canal, mode=modo_color)
+            imagen_pil.thumbnail((190, 150), Image.Resampling.LANCZOS)
+            imagen_tk = ImageTk.PhotoImage(imagen_pil)
+            label_widget.config(image=imagen_tk)
+            label_widget.image = imagen_tk
 
-        h_r_orig, h_r_mod = calcular_histograma_1d(r), calcular_histograma_1d(r_mod)
-        h_g_orig, h_g_mod = calcular_histograma_1d(g), calcular_histograma_1d(g_mod)
-        h_b_orig, h_b_mod = calcular_histograma_1d(b), calcular_histograma_1d(b_mod)
+        hist_rojo_orig = calcular_histograma_frecuencias(canal_rojo)
+        hist_rojo_mod = calcular_histograma_frecuencias(rojo_modificado)
+        hist_verde_orig = calcular_histograma_frecuencias(canal_verde)
+        hist_verde_mod = calcular_histograma_frecuencias(verde_modificado)
+        hist_azul_orig = calcular_histograma_frecuencias(canal_azul)
+        hist_azul_mod = calcular_histograma_frecuencias(azul_modificado)
 
         canales_info = [
-            (self.axes_hist[0], "#ff4444", "Canal Rojo", h_r_orig, h_r_mod),
-            (self.axes_hist[1], "#00cc66", "Canal Verde", h_g_orig, h_g_mod),
-            (self.axes_hist[2], "#3399ff", "Canal Azul", h_b_orig, h_b_mod)
+            (self.axes_hist[0], "#ff4444", "Canal Rojo", hist_rojo_orig, hist_rojo_mod),
+            (self.axes_hist[1], "#00cc66", "Canal Verde", hist_verde_orig, hist_verde_mod),
+            (self.axes_hist[2], "#3399ff", "Canal Azul", hist_azul_orig, hist_azul_mod)
         ]
         for ax, col, nom, ho, hm in canales_info:
             ax.clear()
@@ -348,70 +400,76 @@ class AplicacionPDIMaestra:
 
     def actualizar_matriz_text(self):
         try:
-            k = int(self.entry_tam_k.get())
-            if k < 3 or k % 2 == 0:
+            tamano_kernel = int(self.entry_tam_k.get())
+            if tamano_kernel < 3 or tamano_kernel % 2 == 0:
                 raise ValueError
         except ValueError:
             self.entry_tam_k.delete(0, tk.END)
             self.entry_tam_k.insert(0, "3")
-            k = 3
+            tamano_kernel = 3
 
-        tipo = self.combo_filtro_espacial.get()
+        tipo_filtro = self.combo_filtro_espacial.get()
         self.text_matriz.delete("1.0", tk.END)
-        if "Gaussiana" in tipo:
-            w = calcular_matriz_gaussiana(k, sigma=1.0)
-            texto = f"Gaussiana analítica (k={k}, suma=1.0):\n" + "\n".join(["[" + " ".join([f"{v:6.4f}" for v in row]) + "]" for row in w])
-        elif "Media" in tipo:
-            w = np.ones((k, k), dtype=np.float64) / float(k * k)
-            texto = f"Media uniforme (k={k}, peso=1/{k*k}):\n" + "\n".join(["[" + " ".join([f"{v:6.4f}" for v in row]) + "]" for row in w])
+        if "Gaussiana" in tipo_filtro:
+            mascara_pesos = generar_mascara_gaussiana(tamano_kernel, desviacion_sigma=1.0)
+            texto = (
+                f"Gaussiana analítica (k={tamano_kernel}, suma=1.0):\n"
+                + "\n".join(["[" + " ".join([f"{v:6.4f}" for v in fila]) + "]" for fila in mascara_pesos])
+            )
+        elif "Media" in tipo_filtro:
+            mascara_pesos = np.ones((tamano_kernel, tamano_kernel), dtype=np.float64) / float(tamano_kernel * tamano_kernel)
+            texto = (
+                f"Media uniforme (k={tamano_kernel}, peso=1/{tamano_kernel*tamano_kernel}):\n"
+                + "\n".join(["[" + " ".join([f"{v:6.4f}" for v in fila]) + "]" for fila in mascara_pesos])
+            )
         else:
-            texto = f"Filtro No Lineal ({tipo}):\nOrdenamiento local de vecindad de {k}x{k}."
+            texto = f"Filtro No Lineal ({tipo_filtro}):\nOrdenamiento local de vecindad de {tamano_kernel}x{tamano_kernel}."
         self.text_matriz.insert(tk.END, texto)
 
     def actualizar_tab2_preview(self):
-        dens = float(self.slider_ruido.get())
-        self.img_ruidosa = inyectar_ruido_sal_pimienta(self.img_rgb_original, dens)
-        h, w, _ = self.img_ruidosa.shape
-        self.lbl_dim_esp_orig.config(text=f"{h}x{w} px | Ruido: {dens*100:.1f}%")
-        im_pil = Image.fromarray(self.img_ruidosa)
-        im_pil.thumbnail((440, 440), Image.Resampling.LANCZOS)
-        self.tk_ruidosa = ImageTk.PhotoImage(im_pil)
+        densidad_ruido = float(self.slider_ruido.get())
+        self.img_ruidosa = aplicar_ruido_sal_y_pimienta(self.img_rgb_original, densidad_ruido)
+        alto_img, ancho_img, _ = self.img_ruidosa.shape
+        self.lbl_dim_esp_orig.config(text=f"{alto_img}x{ancho_img} px | Ruido: {densidad_ruido*100:.1f}%")
+        imagen_pil = Image.fromarray(self.img_ruidosa)
+        imagen_pil.thumbnail((440, 440), Image.Resampling.LANCZOS)
+        self.tk_ruidosa = ImageTk.PhotoImage(imagen_pil)
         self.lbl_img_esp_orig.config(image=self.tk_ruidosa)
 
     def ejecutar_filtro_espacial(self):
         self.actualizar_tab2_preview()
         try:
-            k = int(self.entry_tam_k.get())
-            salto_f = max(1, int(self.entry_salto_f.get()))
-            salto_c = max(1, int(self.entry_salto_c.get()))
+            tamano_kernel = int(self.entry_tam_k.get())
+            salto_filas = max(1, int(self.entry_salto_f.get()))
+            salto_columnas = max(1, int(self.entry_salto_c.get()))
         except ValueError:
-            salto_f, salto_c = 1, 1
+            salto_filas, salto_columnas = 1, 1
 
-        pad = self.var_padding.get()
-        tipo = self.combo_filtro_espacial.get()
-        r, g, b, _ = separar_canales_rgb(self.img_ruidosa)
+        aplicar_relleno = self.var_padding.get()
+        tipo_filtro = self.combo_filtro_espacial.get()
+        canal_rojo, canal_verde, canal_azul, _ = extraer_canales_rgb_y_gris(self.img_ruidosa)
 
-        if "Gaussiana" in tipo:
-            mascara = calcular_matriz_gaussiana(k)
-            r_out = convolucion_con_salto_manual(r, mascara, salto_f, salto_c, pad)
-            g_out = convolucion_con_salto_manual(g, mascara, salto_f, salto_c, pad)
-            b_out = convolucion_con_salto_manual(b, mascara, salto_f, salto_c, pad)
-        elif "Media" in tipo:
-            mascara = np.ones((k, k), dtype=np.float64) / float(k * k)
-            r_out = convolucion_con_salto_manual(r, mascara, salto_f, salto_c, pad)
-            g_out = convolucion_con_salto_manual(g, mascara, salto_f, salto_c, pad)
-            b_out = convolucion_con_salto_manual(b, mascara, salto_f, salto_c, pad)
+        if "Gaussiana" in tipo_filtro:
+            mascara_filtro = generar_mascara_gaussiana(tamano_kernel)
+            rojo_filtrado = convolucionar_con_salto_espacial(canal_rojo, mascara_filtro, salto_filas, salto_columnas, aplicar_relleno)
+            verde_filtrado = convolucionar_con_salto_espacial(canal_verde, mascara_filtro, salto_filas, salto_columnas, aplicar_relleno)
+            azul_filtrado = convolucionar_con_salto_espacial(canal_azul, mascara_filtro, salto_filas, salto_columnas, aplicar_relleno)
+        elif "Media" in tipo_filtro:
+            mascara_filtro = np.ones((tamano_kernel, tamano_kernel), dtype=np.float64) / float(tamano_kernel * tamano_kernel)
+            rojo_filtrado = convolucionar_con_salto_espacial(canal_rojo, mascara_filtro, salto_filas, salto_columnas, aplicar_relleno)
+            verde_filtrado = convolucionar_con_salto_espacial(canal_verde, mascara_filtro, salto_filas, salto_columnas, aplicar_relleno)
+            azul_filtrado = convolucionar_con_salto_espacial(canal_azul, mascara_filtro, salto_filas, salto_columnas, aplicar_relleno)
         else:
-            r_out = filtro_mediana_manual(r, k, salto_f, salto_c)
-            g_out = filtro_mediana_manual(g, k, salto_f, salto_c)
-            b_out = filtro_mediana_manual(b, k, salto_f, salto_c)
+            rojo_filtrado = aplicar_filtro_mediana_con_salto(canal_rojo, tamano_kernel, salto_filas, salto_columnas)
+            verde_filtrado = aplicar_filtro_mediana_con_salto(canal_verde, tamano_kernel, salto_filas, salto_columnas)
+            azul_filtrado = aplicar_filtro_mediana_con_salto(canal_azul, tamano_kernel, salto_filas, salto_columnas)
 
-        img_red = np.stack([r_out, g_out, b_out], axis=-1)
-        h_r, w_r, _ = img_red.shape
-        self.lbl_dim_esp_res.config(text=f"{h_r}x{w_r} px (Salto {salto_f}x{salto_c})")
-        im_pil = Image.fromarray(img_red)
-        im_pil.thumbnail((440, 440), Image.Resampling.LANCZOS)
-        self.tk_reducida = ImageTk.PhotoImage(im_pil)
+        imagen_filtrada_reducida = np.stack([rojo_filtrado, verde_filtrado, azul_filtrado], axis=-1)
+        alto_reducido, ancho_reducido, _ = imagen_filtrada_reducida.shape
+        self.lbl_dim_esp_res.config(text=f"{alto_reducido}x{ancho_reducido} px (Salto {salto_filas}x{salto_columnas})")
+        imagen_pil = Image.fromarray(imagen_filtrada_reducida)
+        imagen_pil.thumbnail((440, 440), Image.Resampling.LANCZOS)
+        self.tk_reducida = ImageTk.PhotoImage(imagen_pil)
         self.lbl_img_esp_res.config(image=self.tk_reducida)
 
     # =========================================================================
@@ -483,36 +541,53 @@ class AplicacionPDIMaestra:
         self.actualizar_tab3_ffts()
 
     def actualizar_tab3_ffts(self):
-        tipo_fft = self.combo_tipo_fft.get()
-        d0 = float(self.slider_d0.get())
-        dens_ruido = float(self.slider_ruido_fft.get()) / 100.0
-        modo_esp = self.combo_modo_espectro.get()
+        tipo_filtro_fft = self.combo_tipo_fft.get()
+        radio_d0 = float(self.slider_d0.get())
+        densidad_ruido = float(self.slider_ruido_fft.get()) / 100.0
+        modo_espectro = self.combo_modo_espectro.get()
 
-        img_base = inyectar_ruido_sal_pimienta(self.img_rgb_original, dens_ruido)
-        img_ifft_color, espectro = filtrado_frecuencia_fft(img_base, tipo=tipo_fft, d0=d0, modo_espectro=modo_esp)
+        imagen_base = aplicar_ruido_sal_y_pimienta(self.img_rgb_original, densidad_ruido)
+        imagen_ifft_color, espectro = filtrar_en_frecuencia_fft2(
+            imagen_base,
+            tipo_filtro=tipo_filtro_fft,
+            radio_corte_d0=radio_d0,
+            modo_visualizacion_espectro=modo_espectro
+        )
 
-        min_e, max_e = np.min(espectro), np.max(espectro)
-        esp_norm = (255.0 * (espectro - min_e) / (max_e - min_e + 1e-6)).astype(np.uint8) if max_e > min_e else np.zeros_like(espectro, dtype=np.uint8)
+        min_espectro, max_espectro = np.min(espectro), np.max(espectro)
+        espectro_normalizado = (
+            (255.0 * (espectro - min_espectro) / (max_espectro - min_espectro + 1e-6)).astype(np.uint8)
+            if max_espectro > min_espectro else np.zeros_like(espectro, dtype=np.uint8)
+        )
 
         if self.var_aplicar_acentuado.get():
-            modo_ac = self.combo_modo_acentuado.get()
-            factor_a = float(self.slider_factor_a.get())
-            img_ac = acentuado_espacial(img_ifft_color, modo=modo_ac, factor_a=factor_a)
-            self.lbl_tit_acentuado.config(text=f"Acentuado: {modo_ac.upper()} (A={factor_a:.1f})")
+            modo_acentuado = self.combo_modo_acentuado.get()
+            factor_amplificacion_a = float(self.slider_factor_a.get())
+            imagen_acentuada = aplicar_acentuado_espacial(
+                imagen_ifft_color,
+                modo_acentuado=modo_acentuado,
+                factor_amplificacion_a=factor_amplificacion_a
+            )
+            self.lbl_tit_acentuado.config(text=f"Acentuado: {modo_acentuado.upper()} (A={factor_amplificacion_a:.1f})")
         else:
-            img_ac = img_ifft_color
+            imagen_acentuada = imagen_ifft_color
             self.lbl_tit_acentuado.config(text="Acentuado Inactivo")
 
-        self.lbl_tit_espectro.config(text=f"Espectro: {modo_esp.upper()}")
-        self.lbl_tit_entrada.config(text=f"Entrada (Ruido={dens_ruido*100:.0f}%)")
-        self.lbl_tit_ifft.config(text=f"Salida IFFT ({tipo_fft.upper()} D0={d0:.0f})")
+        self.lbl_tit_espectro.config(text=f"Espectro: {modo_espectro.upper()}")
+        self.lbl_tit_entrada.config(text=f"Entrada (Ruido={densidad_ruido*100:.0f}%)")
+        self.lbl_tit_ifft.config(text=f"Salida IFFT ({tipo_filtro_fft.upper()} D0={radio_d0:.0f})")
 
-        for arr, lbl in [(esp_norm, self.lbl_img_fft_espectro), (img_ifft_color, self.lbl_img_fft_ifft), (img_base, self.lbl_img_fft_base), (img_ac, self.lbl_img_fft_acentuado)]:
-            im_p = Image.fromarray(arr)
-            im_p.thumbnail((360, 220), Image.Resampling.LANCZOS)
-            tk_im = ImageTk.PhotoImage(im_p)
-            lbl.config(image=tk_im)
-            lbl.image = tk_im
+        for arreglo_matriz, label_widget in [
+            (espectro_normalizado, self.lbl_img_fft_espectro),
+            (imagen_ifft_color, self.lbl_img_fft_ifft),
+            (imagen_base, self.lbl_img_fft_base),
+            (imagen_acentuada, self.lbl_img_fft_acentuado)
+        ]:
+            imagen_pil = Image.fromarray(arreglo_matriz)
+            imagen_pil.thumbnail((360, 220), Image.Resampling.LANCZOS)
+            imagen_tk = ImageTk.PhotoImage(imagen_pil)
+            label_widget.config(image=imagen_tk)
+            label_widget.image = imagen_tk
 
     # =========================================================================
     # PESTAÑA 4: DETECCIÓN DE BORDES, GRADIENTES, KIRSCH, LOG, FREI-CHEN Y RELAJACIÓN
@@ -605,23 +680,26 @@ class AplicacionPDIMaestra:
             self.frame_relaj_ctrl.pack(fill=tk.X, pady=4)
 
     def actualizar_tab4_bordes(self):
-        _, _, _, gris = separar_canales_rgb(self.img_rgb_original)
-        op = self.combo_operador_borde.get()
+        _, _, _, canal_gris = extraer_canales_rgb_y_gris(self.img_rgb_original)
+        operador_seleccionado = self.combo_operador_borde.get()
         self.text_teoria_bordes.delete("1.0", tk.END)
 
-        def normalizar_u8(mat):
-            mn, mx = np.min(mat), np.max(mat)
-            if mx > mn:
-                return ((mat - mn) / (mx - mn) * 255.0).astype(np.uint8)
-            return np.zeros_like(mat, dtype=np.uint8)
+        def normalizar_a_uint8(matriz_datos):
+            minimo, maximo = np.min(matriz_datos), np.max(matriz_datos)
+            if maximo > minimo:
+                return ((matriz_datos - minimo) / (maximo - minimo) * 255.0).astype(np.uint8)
+            return np.zeros_like(matriz_datos, dtype=np.uint8)
 
-        if "Roberts" in op:
-            gx, gy, mag = operador_roberts_2x2(gris)
+        if "Roberts" in operador_seleccionado:
+            grad_diag_1, grad_diag_2, magnitud_gradiente = detectar_bordes_roberts(canal_gris)
             self.lbl_tit_b1.config(text="Imagen Original (Gris NTSC)")
             self.lbl_tit_b2.config(text="Roberts Gx (Diagonal 1)")
             self.lbl_tit_b3.config(text="Roberts Gy (Diagonal 2)")
             self.lbl_tit_b4.config(text="Magnitud |Gx| + |Gy|")
-            arr_b1, arr_b2, arr_b3, arr_b4 = gris, normalizar_u8(gx), normalizar_u8(gy), normalizar_u8(mag)
+            arreglo_panel_1 = canal_gris
+            arreglo_panel_2 = normalizar_a_uint8(grad_diag_1)
+            arreglo_panel_3 = normalizar_a_uint8(grad_diag_2)
+            arreglo_panel_4 = normalizar_a_uint8(magnitud_gradiente)
             teoria = (
                 "OPERADOR DE ROBERTS (2x2)\n"
                 "• Diferencias cruzadas diagonales:\n"
@@ -631,13 +709,16 @@ class AplicacionPDIMaestra:
                 "• Muy rápido pero vulnerable al ruido por falta de promediado."
             )
 
-        elif "Prewitt" in op:
-            gx, gy, mag, ang = operador_prewitt_3x3(gris)
+        elif "Prewitt" in operador_seleccionado:
+            grad_x, grad_y, magnitud_gradiente, angulo = detectar_bordes_prewitt(canal_gris)
             self.lbl_tit_b1.config(text="Imagen Original (Gris)")
             self.lbl_tit_b2.config(text="Prewitt Gx (Vertical)")
             self.lbl_tit_b3.config(text="Prewitt Gy (Horizontal)")
             self.lbl_tit_b4.config(text="Magnitud |Gx| + |Gy|")
-            arr_b1, arr_b2, arr_b3, arr_b4 = gris, normalizar_u8(gx), normalizar_u8(gy), normalizar_u8(mag)
+            arreglo_panel_1 = canal_gris
+            arreglo_panel_2 = normalizar_a_uint8(grad_x)
+            arreglo_panel_3 = normalizar_a_uint8(grad_y)
+            arreglo_panel_4 = normalizar_a_uint8(magnitud_gradiente)
             teoria = (
                 "OPERADOR DE PREWITT (3x3)\n"
                 "• Derivadas con promedio simple:\n"
@@ -647,13 +728,16 @@ class AplicacionPDIMaestra:
                 "• Pondera por igual píxeles alineados y esquinas."
             )
 
-        elif "Sobel" in op:
-            gx, gy, mag, ang = operador_sobel_3x3(gris)
+        elif "Sobel" in operador_seleccionado:
+            grad_x, grad_y, magnitud_gradiente, angulo = detectar_bordes_sobel(canal_gris)
             self.lbl_tit_b1.config(text="Imagen Original (Gris)")
             self.lbl_tit_b2.config(text="Sobel Gx (Gradiente Vertical)")
             self.lbl_tit_b3.config(text="Sobel Gy (Gradiente Horizontal)")
             self.lbl_tit_b4.config(text="Magnitud sqrt(Gx^2 + Gy^2)")
-            arr_b1, arr_b2, arr_b3, arr_b4 = gris, normalizar_u8(gx), normalizar_u8(gy), normalizar_u8(mag)
+            arreglo_panel_1 = canal_gris
+            arreglo_panel_2 = normalizar_a_uint8(grad_x)
+            arreglo_panel_3 = normalizar_a_uint8(grad_y)
+            arreglo_panel_4 = normalizar_a_uint8(magnitud_gradiente)
             teoria = (
                 "OPERADOR DE SOBEL (3x3)\n"
                 "• Diferenciación + Suavizado Gaussiano:\n"
@@ -663,13 +747,16 @@ class AplicacionPDIMaestra:
                 "• Reduce notablemente el ruido antes de derivar."
             )
 
-        elif "Kirsch" in op:
-            r0, r45, r90, r135, mag_max, angulos = operador_kirsch_4(gris)
+        elif "Kirsch" in operador_seleccionado:
+            resp_0, resp_45, resp_90, resp_135, mag_maxima, angulos = detectar_bordes_kirsch_4direcciones(canal_gris)
             self.lbl_tit_b1.config(text="Plantilla 0° (Horizontal)")
             self.lbl_tit_b2.config(text="Plantilla 45° (Diagonal)")
             self.lbl_tit_b3.config(text="Plantilla 90° (Vertical)")
             self.lbl_tit_b4.config(text="Máxima Respuesta Kirsch")
-            arr_b1, arr_b2, arr_b3, arr_b4 = normalizar_u8(r0), normalizar_u8(r45), normalizar_u8(r90), normalizar_u8(mag_max)
+            arreglo_panel_1 = normalizar_a_uint8(resp_0)
+            arreglo_panel_2 = normalizar_a_uint8(resp_45)
+            arreglo_panel_3 = normalizar_a_uint8(resp_90)
+            arreglo_panel_4 = normalizar_a_uint8(mag_maxima)
             teoria = (
                 "PLANTILLAS DE KIRSCH (4 DIRECCIONES)\n"
                 "• Máscaras direccionales de 3x3 a 0°, 45°, 90°, 135°:\n"
@@ -681,21 +768,21 @@ class AplicacionPDIMaestra:
                 "• Brinda tanto magnitud como orientación dominante."
             )
 
-        elif "DoG" in op or "Laplaciano" in op:
+        elif "DoG" in operador_seleccionado or "Laplaciano" in operador_seleccionado:
             try:
-                s1 = float(self.entry_s1.get())
-                s2 = float(self.entry_s2.get())
+                desv_sigma1 = float(self.entry_s1.get())
+                desv_sigma2 = float(self.entry_s2.get())
             except ValueError:
-                s1, s2 = 0.5, 0.8
-            dog, cruces = operador_log_dog(gris, s1, s2)
+                desv_sigma1, desv_sigma2 = 0.5, 0.8
+            mapa_dog, cruces_por_cero = detectar_bordes_log_dog_cruces_cero(canal_gris, desv_sigma1, desv_sigma2)
             self.lbl_tit_b1.config(text="Imagen Original")
-            self.lbl_tit_b2.config(text=f"DoG (s1={s1}, s2={s2})")
+            self.lbl_tit_b2.config(text=f"DoG (s1={desv_sigma1}, s2={desv_sigma2})")
             self.lbl_tit_b3.config(text="Cruce por Cero (Bordes Finos)")
             self.lbl_tit_b4.config(text="DoG + Cruce por Cero")
-            arr_b1 = gris
-            arr_b2 = normalizar_u8(dog)
-            arr_b3 = cruces
-            arr_b4 = np.where(cruces > 0, 255, normalizar_u8(dog) // 2).astype(np.uint8)
+            arreglo_panel_1 = canal_gris
+            arreglo_panel_2 = normalizar_a_uint8(mapa_dog)
+            arreglo_panel_3 = cruces_por_cero
+            arreglo_panel_4 = np.where(cruces_por_cero > 0, 255, normalizar_a_uint8(mapa_dog) // 2).astype(np.uint8)
             teoria = (
                 "LAPLACIANO DE GAUSSIANA (LoG / DoG)\n"
                 "• Teoría biológica de David Marr.\n"
@@ -706,16 +793,16 @@ class AplicacionPDIMaestra:
                 "• Suprime dobles orillas buscando cambios de signo."
             )
 
-        elif "Frei-Chen" in op:
-            m_orilla, m_linea, proy = operador_frei_chen_9(gris)
+        elif "Frei-Chen" in operador_seleccionado:
+            medida_orilla, medida_linea, proyecciones = analizar_subespacios_frei_chen(canal_gris)
             self.lbl_tit_b1.config(text="W1 (Orilla Horizontal)")
             self.lbl_tit_b2.config(text="W5 (Línea Horizontal)")
             self.lbl_tit_b3.config(text="Subespacio Líneas (W5-W8)")
             self.lbl_tit_b4.config(text="Subespacio Orillas (W1-W4)")
-            arr_b1 = normalizar_u8(proy[0])
-            arr_b2 = normalizar_u8(proy[4])
-            arr_b3 = normalizar_u8(m_linea)
-            arr_b4 = normalizar_u8(m_orilla)
+            arreglo_panel_1 = normalizar_a_uint8(proyecciones[0])
+            arreglo_panel_2 = normalizar_a_uint8(proyecciones[4])
+            arreglo_panel_3 = normalizar_a_uint8(medida_linea)
+            arreglo_panel_4 = normalizar_a_uint8(medida_orilla)
             teoria = (
                 "MÁSCARAS ORTOGONALES DE FREI-CHEN\n"
                 "• Base vectorial de 9 máscaras de 3x3:\n"
@@ -728,17 +815,17 @@ class AplicacionPDIMaestra:
 
         else:
             # Relajación
-            _, _, mag_sobel, _ = operador_sobel_3x3(gris)
-            it = int(self.slider_iter_relaj.get())
-            relaj = relajacion_bordes_iterativa(mag_sobel, iteraciones=it)
+            _, _, magnitud_sobel, _ = detectar_bordes_sobel(canal_gris)
+            iteraciones_relaj = int(self.slider_iter_relaj.get())
+            bordes_reforzados = aplicar_relajacion_contextual_bordes(magnitud_sobel, numero_iteraciones=iteraciones_relaj)
             self.lbl_tit_b1.config(text="Imagen Original")
             self.lbl_tit_b2.config(text="Gradiente Sobel Base")
-            self.lbl_tit_b3.config(text=f"Relajación ({it} iteraciones)")
+            self.lbl_tit_b3.config(text=f"Relajación ({iteraciones_relaj} iteraciones)")
             self.lbl_tit_b4.config(text="Orillas Continuas Reforzadas")
-            arr_b1 = gris
-            arr_b2 = normalizar_u8(mag_sobel)
-            arr_b3 = relaj
-            arr_b4 = np.where(relaj > 100, 255, 0).astype(np.uint8)
+            arreglo_panel_1 = canal_gris
+            arreglo_panel_2 = normalizar_a_uint8(magnitud_sobel)
+            arreglo_panel_3 = bordes_reforzados
+            arreglo_panel_4 = np.where(bordes_reforzados > 100, 255, 0).astype(np.uint8)
             teoria = (
                 "RELAJACIÓN CONTEXTUAL ITERATIVA\n"
                 "• Proceso probabilístico basado en vecindad.\n"
@@ -750,12 +837,17 @@ class AplicacionPDIMaestra:
 
         self.text_teoria_bordes.insert(tk.END, teoria)
 
-        for arr, lbl in [(arr_b1, self.lbl_img_b1), (arr_b2, self.lbl_img_b2), (arr_b3, self.lbl_img_b3), (arr_b4, self.lbl_img_b4)]:
-            im_p = Image.fromarray(arr)
-            im_p.thumbnail((360, 220), Image.Resampling.LANCZOS)
-            tk_im = ImageTk.PhotoImage(im_p)
-            lbl.config(image=tk_im)
-            lbl.image = tk_im
+        for arr, lbl in [
+            (arreglo_panel_1, self.lbl_img_b1),
+            (arreglo_panel_2, self.lbl_img_b2),
+            (arreglo_panel_3, self.lbl_img_b3),
+            (arreglo_panel_4, self.lbl_img_b4)
+        ]:
+            imagen_pil = Image.fromarray(arr)
+            imagen_pil.thumbnail((360, 220), Image.Resampling.LANCZOS)
+            imagen_tk = ImageTk.PhotoImage(imagen_pil)
+            lbl.config(image=imagen_tk)
+            lbl.image = imagen_tk
 
     # =========================================================================
     # PESTAÑA 5: DELIMITACIÓN GEOMÉTRICA (USO EXCLUSIVO DE OPENCV)
@@ -812,73 +904,77 @@ class AplicacionPDIMaestra:
         self.actualizar_tab5_delimitacion()
 
     def actualizar_tab5_delimitacion(self):
-        r, g, b, gris = separar_canales_rgb(self.img_rgb_original)
-        metodo = self.combo_metodo_seg.get()
+        canal_rojo, canal_verde, canal_azul, canal_gris = extraer_canales_rgb_y_gris(self.img_rgb_original)
+        metodo_segmentacion = self.combo_metodo_seg.get()
 
-        if "Otsu" in metodo:
-            t_otsu = umbral_otsu_numpy(gris)
-            bw_base = (gris < t_otsu).astype(np.uint8) * 255
-            bw_solida = imfill_holes(bw_base)
-            prop = calcular_propiedades_opencv(bw_solida, etiqueta="Objeto (Otsu)")
-            lista_props = [prop] if prop is not None else []
-        elif "Color" in metodo:
-            r_db, g_db, b_db = r / 255.0, g / 255.0, b / 255.0
-            m_roja = (r_db - np.maximum(g_db, b_db) > 0.12) & (r_db > 0.35)
-            m_amarilla = (r_db > 0.45) & (g_db > 0.40) & (b_db < 0.40) & (~m_roja)
-            bw_a = imfill_holes((m_roja * 255).astype(np.uint8))
-            bw_b = imfill_holes((m_amarilla * 255).astype(np.uint8))
-            prop_a = calcular_propiedades_opencv(bw_a, etiqueta="Región Roja")
-            prop_b = calcular_propiedades_opencv(bw_b, etiqueta="Región Amarilla")
-            lista_props = [p for p in [prop_a, prop_b] if p is not None]
+        if "Otsu" in metodo_segmentacion:
+            umbral_otsu = calcular_umbral_otsu(canal_gris)
+            mascara_base = (canal_gris < umbral_otsu).astype(np.uint8) * 255
+            mascara_solida = rellenar_huecos_morfologia(mascara_base)
+            propiedades_region = extraer_propiedades_geometricas(mascara_solida, etiqueta_objeto="Objeto (Otsu)")
+            lista_propiedades = [propiedades_region] if propiedades_region is not None else []
+        elif "Color" in metodo_segmentacion:
+            rojo_float = canal_rojo / 255.0
+            verde_float = canal_verde / 255.0
+            azul_float = canal_azul / 255.0
+            mascara_roja = (rojo_float - np.maximum(verde_float, azul_float) > 0.12) & (rojo_float > 0.35)
+            mascara_amarilla = (rojo_float > 0.45) & (verde_float > 0.40) & (azul_float < 0.40) & (~mascara_roja)
+            mascara_solida_roja = rellenar_huecos_morfologia((mascara_roja * 255).astype(np.uint8))
+            mascara_solida_amarilla = rellenar_huecos_morfologia((mascara_amarilla * 255).astype(np.uint8))
+            propiedades_roja = extraer_propiedades_geometricas(mascara_solida_roja, etiqueta_objeto="Región Roja")
+            propiedades_amarilla = extraer_propiedades_geometricas(mascara_solida_amarilla, etiqueta_objeto="Región Amarilla")
+            lista_propiedades = [p for p in [propiedades_roja, propiedades_amarilla] if p is not None]
         else:
-            t_man = int(self.slider_umbral_man.get())
-            bw_base = (gris < t_man).astype(np.uint8) * 255
-            bw_solida = imfill_holes(bw_base)
-            prop = calcular_propiedades_opencv(bw_solida, etiqueta=f"Objeto (T={t_man})")
-            lista_props = [prop] if prop is not None else []
+            umbral_manual = int(self.slider_umbral_man.get())
+            mascara_base = (canal_gris < umbral_manual).astype(np.uint8) * 255
+            mascara_solida = rellenar_huecos_morfologia(mascara_base)
+            propiedades_region = extraer_propiedades_geometricas(mascara_solida, etiqueta_objeto=f"Objeto (T={umbral_manual})")
+            lista_propiedades = [propiedades_region] if propiedades_region is not None else []
 
-        lienzo = self.img_rgb_original.copy()
-        alto, ancho, _ = lienzo.shape
+        lienzo_dibujo = self.img_rgb_original.copy()
+        alto_imagen, ancho_imagen, _ = lienzo_dibujo.shape
         self.text_props.delete("1.0", tk.END)
         self.text_freeman.delete("1.0", tk.END)
 
-        colores = [(0, 255, 60), (0, 220, 255)]
-        if not lista_props:
+        colores_contorno = [(0, 255, 60), (0, 220, 255)]
+        if not lista_propiedades:
             self.text_props.insert(tk.END, "No se detectaron regiones conexas mayores a 50 px.")
             self.lbl_img_montaje.config(image="")
             self.lbl_img_sub.config(image="")
             return
 
-        for idx, p in enumerate(lista_props):
-            col = colores[idx % len(colores)]
-            cnt = p["contorno"]
-            x, y, w, h = p["bbox"]
-            cx, cy = p["centroide"]
+        for indice_reg, prop in enumerate(lista_propiedades):
+            color_actual = colores_contorno[indice_reg % len(colores_contorno)]
+            contorno = prop["contorno"]
+            caja_x, caja_y, caja_w, caja_h = prop["bbox"]
+            centroide_x, centroide_y = prop["centroide"]
 
-            cv2.drawContours(lienzo, [cnt], -1, col, 2)
-            cv2.rectangle(lienzo, (x, y), (x + w, y + h), col, 2)
-            xq, yq, lado, _ = calcular_cuadrado_simetrico(p["bbox"], p["centroide"], (alto, ancho))
-            cv2.rectangle(lienzo, (xq, yq), (xq + lado, yq + lado), (255, 215, 0), 2)
-            cv2.circle(lienzo, (int(round(cx)), int(round(cy))), 5, (255, 0, 0), -1)
+            cv2.drawContours(lienzo_dibujo, [contorno], -1, color_actual, 2)
+            cv2.rectangle(lienzo_dibujo, (caja_x, caja_y), (caja_x + caja_w, caja_y + caja_h), color_actual, 2)
+            cuad_x, cuad_y, lado_cuadrado, _ = calcular_cuadrado_envolvente_simetrico(
+                prop["bbox"], prop["centroide"], (alto_imagen, ancho_imagen)
+            )
+            cv2.rectangle(lienzo_dibujo, (cuad_x, cuad_y), (cuad_x + lado_cuadrado, cuad_y + lado_cuadrado), (255, 215, 0), 2)
+            cv2.circle(lienzo_dibujo, (int(round(centroide_x)), int(round(centroide_y))), 5, (255, 0, 0), -1)
 
-            self.text_props.insert(tk.END, f"[{p['etiqueta']}]\n")
-            self.text_props.insert(tk.END, f" • Área: {p['area']:.1f} px | Perímetro: {p['perimetro']:.1f}\n")
-            self.text_props.insert(tk.END, f" • Centroide: ({cx:.2f}, {cy:.2f})\n")
-            self.text_props.insert(tk.END, f" • BBox: [x={x}, y={y}, w={w}, h={h}]\n")
-            self.text_props.insert(tk.END, f" • Cuadrado (max w,h): [lado={lado}]\n\n")
+            self.text_props.insert(tk.END, f"[{prop['etiqueta']}]\n")
+            self.text_props.insert(tk.END, f" • Área: {prop['area']:.1f} px | Perímetro: {prop['perimetro']:.1f}\n")
+            self.text_props.insert(tk.END, f" • Centroide: ({centroide_x:.2f}, {centroide_y:.2f})\n")
+            self.text_props.insert(tk.END, f" • BBox: [x={caja_x}, y={caja_y}, w={caja_w}, h={caja_h}]\n")
+            self.text_props.insert(tk.END, f" • Cuadrado (max w,h): [lado={lado_cuadrado}]\n\n")
 
-            cadena_str = "".join(str(d) for d in p["freeman"][:50])
-            self.text_freeman.insert(tk.END, f"{p['etiqueta']} (Primeros 50):\n{cadena_str}...\n\n")
+            cadena_freeman_primeros50 = "".join(str(d) for d in prop["freeman"][:50])
+            self.text_freeman.insert(tk.END, f"{prop['etiqueta']} (Primeros 50):\n{cadena_freeman_primeros50}...\n\n")
 
-        im_pil = Image.fromarray(lienzo)
-        im_pil.thumbnail((500, 480), Image.Resampling.LANCZOS)
-        self.tk_montaje = ImageTk.PhotoImage(im_pil)
+        imagen_montaje_pil = Image.fromarray(lienzo_dibujo)
+        imagen_montaje_pil.thumbnail((500, 480), Image.Resampling.LANCZOS)
+        self.tk_montaje = ImageTk.PhotoImage(imagen_montaje_pil)
         self.lbl_img_montaje.config(image=self.tk_montaje)
 
-        sub_im = lista_props[0]["subimagen"]
-        sub_pil = Image.fromarray(sub_im)
-        sub_pil.thumbnail((250, 250), Image.Resampling.NEAREST)
-        self.tk_sub = ImageTk.PhotoImage(sub_pil)
+        subimagen_objeto = lista_propiedades[0]["subimagen"]
+        subimagen_pil = Image.fromarray(subimagen_objeto)
+        subimagen_pil.thumbnail((250, 250), Image.Resampling.NEAREST)
+        self.tk_sub = ImageTk.PhotoImage(subimagen_pil)
         self.lbl_img_sub.config(image=self.tk_sub)
 
 
